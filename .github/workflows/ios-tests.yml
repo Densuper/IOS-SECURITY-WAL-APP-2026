@@ -1,0 +1,34 @@
+name: iOS tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build and run unit tests
+        run: |
+          SIMULATOR_ID=$(python3 - <<'PY'
+          import json
+          import subprocess
+          devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))["devices"]
+          candidates = [device["udid"] for runtime, group in sorted(devices.items()) if ".iOS-" in runtime for device in group if device.get("isAvailable") and device["name"].startswith("iPhone")]
+          if not candidates:
+              raise SystemExit("No available iPhone simulator")
+          print(candidates[0])
+          PY
+          )
+          xcodebuild test -project SecurePatrol.xcodeproj -scheme SecurePatrol \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO

@@ -12,6 +12,7 @@ struct ContentView: View {
             NavigationStack { HistoryView() }
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
         }
+        .task { await store.load() }
         .alert("SecurePatrol", isPresented: Binding(
             get: { store.message != nil },
             set: { if !$0 { store.clearMessage() } }
@@ -26,11 +27,19 @@ struct ContentView: View {
 private struct DashboardView: View {
     @EnvironmentObject private var store: PatrolStore
     @State private var scanning = false
+    @State private var pendingCode: String?
 
     var body: some View {
         List {
             Section("Patrol status") {
-                if let round = store.activeRound, let route = store.route {
+                if !store.isReady {
+                    if store.isLoading {
+                        ProgressView("Loading patrol data…")
+                    } else {
+                        Text("Patrol data is unavailable. Retry loading to continue.")
+                        Button("Retry loading") { Task { await store.load() } }
+                    }
+                } else if let round = store.activeRound, let route = store.route {
                     Label("Round in progress", systemImage: "figure.walk")
                     ProgressView(value: Double(round.scannedCheckpointIDs.count),
                                  total: Double(max(route.checkpointIDs.count, 1)))
@@ -44,11 +53,14 @@ private struct DashboardView: View {
                     } label: {
                         Label("Scan next checkpoint", systemImage: "qrcode.viewfinder")
                     }
+                    .disabled(store.isBusy)
                 } else {
                     Label("No active patrol", systemImage: "pause.circle")
-                    Button("Start patrol round") { store.startRound() }
+                    Button("Start patrol round") { Task { await store.startRound() } }
                         .font(.headline)
+                        .disabled(store.isBusy)
                 }
+                if store.isSaving { ProgressView("Saving patrol…") }
             }
             Section("Overview") {
                 LabeledContent("Registered checkpoints", value: "\(store.checkpoints.count)")
@@ -61,11 +73,15 @@ private struct DashboardView: View {
             }
         }
         .navigationTitle("SecurePatrol")
-        .sheet(isPresented: $scanning) {
+        .sheet(isPresented: $scanning, onDismiss: {
+            guard let code = pendingCode else { return }
+            pendingCode = nil
+            Task { await store.recordScan(code) }
+        }) {
             NavigationStack {
                 QRScannerView { value in
                     scanning = false
-                    store.recordScan(value)
+                    pendingCode = value
                 }
                 .navigationTitle("Scan QR Code")
                 .navigationBarTitleDisplayMode(.inline)

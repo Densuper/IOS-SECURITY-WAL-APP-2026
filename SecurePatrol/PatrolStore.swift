@@ -1,12 +1,5 @@
 import Foundation
-
-private struct SavedPatrolState: Codable {
-    var checkpoints: [Checkpoint]
-    var events: [PatrolEvent]
-    var route: PatrolRoute
-    var activeRound: PatrolRound?
-    var completedRounds: [PatrolRound]
-}
+import Combine
 
 @MainActor
 final class PatrolStore: ObservableObject {
@@ -15,9 +8,13 @@ final class PatrolStore: ObservableObject {
     @Published private(set) var route: PatrolRoute?
     @Published private(set) var activeRound: PatrolRound?
     @Published private(set) var completedRounds: [PatrolRound] = []
+    @Published private(set) var isLoading = false
+    @Published private(set) var isSaving = false
+    @Published private(set) var isReady = false
     @Published var message: String?
 
-    private let fileURL: URL
+    private let storage: any PatrolStorage
+    var isBusy: Bool { isLoading || isSaving }
 
     var nextCheckpoint: Checkpoint? {
         guard let route, let round = activeRound,
@@ -26,24 +23,43 @@ final class PatrolStore: ObservableObject {
         return checkpoints.first(where: { $0.id == id })
     }
 
-    init() {
+    init(fileURL: URL? = nil) {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        fileURL = directory.appendingPathComponent("patrol-data.json")
-        load()
+        storage = PatrolFileStorage(fileURL: fileURL ?? directory.appendingPathComponent("patrol-data.json"))
     }
 
-    func startRound() {
-        guard activeRound == nil, let route, !route.checkpointIDs.isEmpty else {
+    init(storage: any PatrolStorage) {
+        self.storage = storage
+    }
+
+    func load() async {
+        guard !isBusy, !isReady else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let state = try await storage.load()
+            try state.validate()
+            publish(state)
+            isReady = true
+            message = nil
+        } catch {
+            message = "Could not load patrol data. Existing data was not replaced: \(error.localizedDescription)"
+        }
+    }
+
+    func startRound() async {
+        guard isReady, !isBusy else { return }
+        guard activeRound == nil, let route else {
             message = "A round is already active, or no route is configured."
             return
         }
-        activeRound = PatrolRound(routeID: route.id)
-        save()
-        message = "Patrol started. Scan checkpoints in order."
+        let state = SavedPatrolState(checkpoints: checkpoints, events: events, route: route,
+                                     activeRound: PatrolRound(routeID: route.id), completedRounds: completedRounds)
+        await commit(state, success: "Patrol started. Scan checkpoints in order.")
     }
 
-    func recordScan(_ rawCode: String) {
+    func recordScan(_ rawCode: String) async {
+        guard isReady, !isBusy else { return }
         let code = rawCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let checkpoint = checkpoints.first(where: { $0.code == code }) else {
             message = "Unregistered checkpoint."
@@ -55,16 +71,15 @@ final class PatrolStore: ObservableObject {
         }
         do {
             let advanced = try PatrolRouteValidator.advancing(round, checkpointID: checkpoint.id, route: route)
-            events.insert(PatrolEvent(checkpoint: checkpoint), at: 0)
-            if advanced.isComplete {
-                completedRounds.insert(advanced, at: 0)
-                activeRound = nil
-                message = "Patrol completed. All checkpoints verified."
-            } else {
-                activeRound = advanced
-                message = "Verified: \(checkpoint.name)"
-            }
-            save()
+            var updatedEvents = events
+            updatedEvents.insert(PatrolEvent(checkpoint: checkpoint), at: 0)
+            var updatedCompletedRounds = completedRounds
+            if advanced.isComplete { updatedCompletedRounds.insert(advanced, at: 0) }
+            let state = SavedPatrolState(checkpoints: checkpoints, events: updatedEvents, route: route,
+                                         activeRound: advanced.isComplete ? nil : advanced,
+                                         completedRounds: updatedCompletedRounds)
+            await commit(state, success: advanced.isComplete
+                         ? "Patrol completed. All checkpoints verified." : "Verified: \(checkpoint.name)")
         } catch {
             message = error.localizedDescription
         }
@@ -72,45 +87,23 @@ final class PatrolStore: ObservableObject {
 
     func clearMessage() { message = nil }
 
-    private func load() {
-        if let data = try? Data(contentsOf: fileURL) {
-            if let state = try? JSONDecoder().decode(SavedPatrolState.self, from: data) {
-                checkpoints = state.checkpoints
-                events = state.events
-                route = state.route
-                activeRound = state.activeRound
-                completedRounds = state.completedRounds
-                return
-            }
-            // Upgrade data written by the first version of the app.
-            if let legacy = try? JSONDecoder().decode(PatrolData.self, from: data) {
-                checkpoints = legacy.checkpoints
-                events = legacy.events
-                route = PatrolRoute(name: "Default Patrol", checkpointIDs: legacy.checkpoints.map(\.id))
-                save()
-                return
-            }
-            message = "Saved patrol data could not be read. It was not overwritten."
-            return
-        }
-        checkpoints = [
-            Checkpoint(name: "Lobby", code: "SP-LOBBY-001", location: "Ground floor"),
-            Checkpoint(name: "Stairwell", code: "SP-STAIR-002", location: "First floor"),
-            Checkpoint(name: "Roof Access", code: "SP-ROOF-003", location: "Roof")
-        ]
-        route = PatrolRoute(name: "Default Patrol", checkpointIDs: checkpoints.map(\.id))
-        save()
-    }
-
-    private func save() {
-        guard let route else { return }
-        let state = SavedPatrolState(checkpoints: checkpoints, events: events, route: route,
-                                     activeRound: activeRound, completedRounds: completedRounds)
-        guard let data = try? JSONEncoder().encode(state) else { return }
+    private func commit(_ state: SavedPatrolState, success: String) async {
+        isSaving = true
+        defer { isSaving = false }
         do {
-            try data.write(to: fileURL, options: .atomic)
+            try await storage.save(state)
+            publish(state)
+            message = success
         } catch {
             message = "Could not save patrol data: \(error.localizedDescription)"
         }
+    }
+
+    private func publish(_ state: SavedPatrolState) {
+        checkpoints = state.checkpoints
+        events = state.events
+        route = state.route
+        activeRound = state.activeRound
+        completedRounds = state.completedRounds
     }
 }
