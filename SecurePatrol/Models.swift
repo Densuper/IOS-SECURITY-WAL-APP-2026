@@ -1,6 +1,6 @@
 import Foundation
 
-struct Checkpoint: Identifiable, Codable, Hashable {
+struct Checkpoint: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var name: String
     var code: String
@@ -14,7 +14,7 @@ struct Checkpoint: Identifiable, Codable, Hashable {
     }
 }
 
-struct PatrolEvent: Identifiable, Codable {
+struct PatrolEvent: Identifiable, Codable, Sendable {
     var id: UUID
     var checkpointID: UUID
     var checkpointName: String
@@ -28,7 +28,7 @@ struct PatrolEvent: Identifiable, Codable {
     }
 }
 
-struct PatrolData: Codable {
+struct PatrolData: Codable, Sendable {
     var checkpoints: [Checkpoint]
     var events: [PatrolEvent]
 }

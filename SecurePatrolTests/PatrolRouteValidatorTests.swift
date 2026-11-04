@@ -43,4 +43,32 @@ final class PatrolRouteValidatorTests: XCTestCase {
         let round = PatrolRound(routeID: route.id)
         XCTAssertThrowsError(try PatrolRouteValidator.validate(checkpointID: UUID(), route: route, round: round))
     }
+
+    func testRoundFromAnotherRouteIsRejected() {
+        let (route, _, first, _) = fixture()
+        let round = PatrolRound(routeID: UUID())
+        XCTAssertThrowsError(try PatrolRouteValidator.advancing(round, checkpointID: first, route: route))
+    }
+
+    func testInvalidPreviousScansAreRejected() {
+        let (route, initial, _, second) = fixture()
+        var round = initial
+        round.scannedCheckpointIDs = [second]
+        XCTAssertThrowsError(try PatrolRouteValidator.advancing(round, checkpointID: second, route: route))
+    }
+
+    func testFullRoundWithoutCompletionTimestampIsRejected() {
+        let (route, initial, first, second) = fixture()
+        var round = initial
+        round.scannedCheckpointIDs = [first, second]
+        XCTAssertThrowsError(try PatrolRouteValidator.validateRound(round, route: route))
+    }
+
+    func testCompletionBeforeStartIsRejected() {
+        let (route, initial, first, second) = fixture()
+        var round = initial
+        round.scannedCheckpointIDs = [first, second]
+        round.completedAt = round.startedAt.addingTimeInterval(-1)
+        XCTAssertThrowsError(try PatrolRouteValidator.validateRound(round, route: route))
+    }
 }

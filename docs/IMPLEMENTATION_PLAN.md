@@ -3,11 +3,12 @@
 ## Implemented starter
 - SwiftUI tab navigation, checkpoint list, QR camera capture
 - Registered QR code matching and locally saved scan history
-- Route model and ordered checkpoint validator (not yet integrated)
+- Ordered patrol rounds integrated with validated, versioned persistence and background atomic writes
+- Unit-test target covering route validation, storage migration, failures, and overlapping commands
 - PIN verifier primitive (not yet integrated)
 
 ## Next integration tasks
-1. Add a patrol session coordinator to persist active route, round, and checkpoint events in one transaction.
+1. Validate the integrated patrol workflow on physical iPhones, including camera permission, cancellation, and reopening.
 2. Add admin-managed checkpoint enrollment, route editing, and guard roles.
 3. Implement secure PIN authentication using a slow password KDF, Keychain, attempt limits, and recovery procedures.
 4. Make patrol history append-only with tamper-evident event chaining, timestamps, and authenticated guard IDs.
