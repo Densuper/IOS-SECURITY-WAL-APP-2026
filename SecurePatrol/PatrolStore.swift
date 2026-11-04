@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 private struct SavedPatrolState: Codable {
     var checkpoints: [Checkpoint]
@@ -26,10 +27,15 @@ final class PatrolStore: ObservableObject {
         return checkpoints.first(where: { $0.id == id })
     }
 
-    init() {
+    init(fileURL: URL? = nil) {
+        if let fileURL {
+            self.fileURL = fileURL
+            load()
+            return
+        }
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        fileURL = directory.appendingPathComponent("patrol-data.json")
+        self.fileURL = directory.appendingPathComponent("patrol-data.json")
         load()
     }
 
@@ -38,8 +44,9 @@ final class PatrolStore: ObservableObject {
             message = "A round is already active, or no route is configured."
             return
         }
-        activeRound = PatrolRound(routeID: route.id)
-        save()
+        let round = PatrolRound(routeID: route.id)
+        guard save(activeRound: round, events: events, completedRounds: completedRounds) else { return }
+        activeRound = round
         message = "Patrol started. Scan checkpoints in order."
     }
 
@@ -55,16 +62,21 @@ final class PatrolStore: ObservableObject {
         }
         do {
             let advanced = try PatrolRouteValidator.advancing(round, checkpointID: checkpoint.id, route: route)
-            events.insert(PatrolEvent(checkpoint: checkpoint), at: 0)
+            var updatedEvents = events
+            updatedEvents.insert(PatrolEvent(checkpoint: checkpoint), at: 0)
+            var updatedCompletedRounds = completedRounds
+            if advanced.isComplete { updatedCompletedRounds.insert(advanced, at: 0) }
+            guard save(activeRound: advanced.isComplete ? nil : advanced,
+                       events: updatedEvents, completedRounds: updatedCompletedRounds) else { return }
+            events = updatedEvents
             if advanced.isComplete {
-                completedRounds.insert(advanced, at: 0)
+                completedRounds = updatedCompletedRounds
                 activeRound = nil
                 message = "Patrol completed. All checkpoints verified."
             } else {
                 activeRound = advanced
                 message = "Verified: \(checkpoint.name)"
             }
-            save()
         } catch {
             message = error.localizedDescription
         }
@@ -102,15 +114,23 @@ final class PatrolStore: ObservableObject {
         save()
     }
 
-    private func save() {
-        guard let route else { return }
+    @discardableResult
+    private func save() -> Bool {
+        save(activeRound: activeRound, events: events, completedRounds: completedRounds)
+    }
+
+    private func save(activeRound: PatrolRound?, events: [PatrolEvent],
+                      completedRounds: [PatrolRound]) -> Bool {
+        guard let route else { return false }
         let state = SavedPatrolState(checkpoints: checkpoints, events: events, route: route,
                                      activeRound: activeRound, completedRounds: completedRounds)
-        guard let data = try? JSONEncoder().encode(state) else { return }
         do {
+            let data = try JSONEncoder().encode(state)
             try data.write(to: fileURL, options: .atomic)
+            return true
         } catch {
             message = "Could not save patrol data: \(error.localizedDescription)"
+            return false
         }
     }
 }
