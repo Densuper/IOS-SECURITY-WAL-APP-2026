@@ -20,3 +20,20 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
+  SecurePatrolTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [SecurePatrolTests]
+    dependencies:
+      - target: SecurePatrol
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  SecurePatrol:
+    build:
+      targets:
+        SecurePatrol: all
+    test:
+      targets:
+        - SecurePatrolTests
