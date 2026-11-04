@@ -5,20 +5,12 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
-            NavigationStack {
-                DashboardView()
-            }
-            .tabItem { Label("Home", systemImage: "house.fill") }
-
-            NavigationStack {
-                CheckpointsView()
-            }
-            .tabItem { Label("Checkpoints", systemImage: "qrcode.viewfinder") }
-
-            NavigationStack {
-                HistoryView()
-            }
-            .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+            NavigationStack { DashboardView() }
+                .tabItem { Label("Patrol", systemImage: "figure.walk") }
+            NavigationStack { CheckpointsView() }
+                .tabItem { Label("Checkpoints", systemImage: "qrcode.viewfinder") }
+            NavigationStack { HistoryView() }
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
         }
         .alert("SecurePatrol", isPresented: Binding(
             get: { store.message != nil },
@@ -37,21 +29,35 @@ private struct DashboardView: View {
 
     var body: some View {
         List {
-            Section {
-                Label("Registered checkpoints: \(store.checkpoints.count)", systemImage: "mappin.and.ellipse")
-                Label("Scans recorded: \(store.events.count)", systemImage: "checkmark.shield")
-            } header: {
-                Text("Patrol overview")
-            }
-            Section {
-                Button {
-                    scanning = true
-                } label: {
-                    Label("Scan checkpoint", systemImage: "qrcode.viewfinder")
+            Section("Patrol status") {
+                if let round = store.activeRound, let route = store.route {
+                    Label("Round in progress", systemImage: "figure.walk")
+                    ProgressView(value: Double(round.scannedCheckpointIDs.count),
+                                 total: Double(max(route.checkpointIDs.count, 1)))
+                    Text("\(round.scannedCheckpointIDs.count) of \(route.checkpointIDs.count) checkpoints")
+                        .foregroundStyle(.secondary)
+                    if let next = store.nextCheckpoint {
+                        LabeledContent("Next checkpoint", value: next.name)
+                    }
+                    Button {
+                        scanning = true
+                    } label: {
+                        Label("Scan next checkpoint", systemImage: "qrcode.viewfinder")
+                    }
+                } else {
+                    Label("No active patrol", systemImage: "pause.circle")
+                    Button("Start patrol round") { store.startRound() }
                         .font(.headline)
                 }
-            } footer: {
-                Text("Starter app: checkpoint data is stored locally on this device.")
+            }
+            Section("Overview") {
+                LabeledContent("Registered checkpoints", value: "\(store.checkpoints.count)")
+                LabeledContent("Completed rounds", value: "\(store.completedRounds.count)")
+                LabeledContent("Verified scans", value: "\(store.events.count)")
+            }
+            Section {
+                Text("Demo route and QR codes are placeholders. Configure your site's checkpoints before operational use.")
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("SecurePatrol")
@@ -94,19 +100,33 @@ private struct HistoryView: View {
 
     var body: some View {
         List {
-            if store.events.isEmpty {
-                ContentUnavailableView("No scans yet", systemImage: "clock",
-                                       description: Text("Verified checkpoint scans appear here."))
-            } else {
-                ForEach(store.events) { event in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(event.checkpointName).font(.headline)
-                        Text(event.scannedAt, format: .dateTime.day().month().year().hour().minute())
-                            .font(.subheadline).foregroundStyle(.secondary)
+            Section("Completed rounds") {
+                if store.completedRounds.isEmpty {
+                    Text("No completed patrols yet").foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.completedRounds) { round in
+                        VStack(alignment: .leading) {
+                            Text("Completed patrol").font(.headline)
+                            Text(round.completedAt ?? round.startedAt, format: .dateTime.day().month().year().hour().minute())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Section("Verified checkpoint scans") {
+                if store.events.isEmpty {
+                    Text("No scans yet").foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.events) { event in
+                        VStack(alignment: .leading) {
+                            Text(event.checkpointName).font(.headline)
+                            Text(event.scannedAt, format: .dateTime.day().month().year().hour().minute())
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
         }
-        .navigationTitle("Scan History")
+        .navigationTitle("History")
     }
 }
